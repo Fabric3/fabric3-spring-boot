@@ -1,0 +1,269 @@
+import org.w3c.dom.Document
+
+import javax.xml.parsers.DocumentBuilder
+import javax.xml.parsers.DocumentBuilderFactory
+import javax.xml.transform.OutputKeys
+import javax.xml.transform.TransformerFactory
+import javax.xml.transform.dom.DOMSource
+import javax.xml.transform.stream.StreamResult
+
+/**
+ * Build for the Fabric3 Spring Boot project.
+ *
+ * The default build cleans, compiles, builds archives and installs the latter in the local Maven repo. To build without running clean, execute:
+ * <code>./gradlew -Pbuild=local</code>.
+ *
+ * To execute a full build where Javadoc and source archives are generated and installed in the local Maven repo,
+ * execute: <code>./gradlew -Pbuild=full</code>.
+ *
+ * To deploy to the Nexus release staging repository, change the version and execute:
+ * <code>./gradlew -Pbuild=deploy -Dcom.sun.net.ssl.rsaPreMasterSecretFix=true</code>
+ * after a full build has been run. Note the 'rsaPreMasterSecretFix' parameter is required as a workaround for this JDK bug:
+ * https://bugs.openjdk.java.net/browse/JDK-8030806
+ *
+ * Note the 'uploadArchives' tasks requires a gradle.properties file to be present containing private key information and authentication parameters
+ * (sonatypeUsername and sonatypePassword).
+ *
+ */
+project.description 'Fabric3 Spring Boot API'
+
+if (hasProperty('build')) {
+    ext.build = project['build']
+} else {
+    ext.build = 'default';
+}
+
+if (ext.build == 'local') {
+    defaultTasks 'jar', 'test', 'assemble', 'install'
+} else if (ext.build == 'deploy') {
+    defaultTasks 'clean', 'test', 'jar', 'assemble', 'install', 'uploadArchives'
+} else {
+    defaultTasks 'clean', 'test', 'jar', 'assemble', 'install'
+}
+
+if (!hasProperty('sonatypeUsername')) {
+    project.ext.sonatypeUsername = "undefined"
+}
+
+if (!hasProperty('sonatypePassword')) {
+    project.ext.sonatypePassword = "undefined"
+}
+
+allprojects {
+    repositories {
+        mavenLocal()
+        mavenCentral()
+    }
+
+}
+
+if (JavaVersion.current().isJava8Compatible()) {
+    allprojects {
+        tasks.withType(Javadoc) {
+            options.addStringOption('Xdoclint:none', '-quiet')
+        }
+    }
+}
+
+group fabric3Group
+def releaseBuild = !version.endsWith('SNAPSHOT');
+
+apply plugin: 'java'
+apply plugin: 'maven'
+
+// suppress warnings about JDK 1.7 boot classpath
+[compileJava, compileTestJava]*.options*.compilerArgs = ['-Xlint:-options']
+sourceCompatibility = 1.8
+targetCompatibility = 1.8
+
+if (build == 'full' || build == 'deploy') {
+    apply plugin: 'signing'
+}
+
+
+dependencies {
+
+    compile group: fabric3Group, name: 'fabric3-node', version: fabric3Version, transitive: false
+
+    compile group: 'org.springframework.boot', name: 'spring-boot-starter-web', version: springBootVersion
+    compile group: 'org.springframework.boot', name: 'spring-boot-starter-actuator', version: springBootVersion
+
+    testCompile 'junit:junit:4.12'
+}
+
+buildscript {
+    repositories {
+        mavenLocal()
+        mavenCentral()
+        maven {
+            url "https://oss.sonatype.org/content/repositories/snapshots"
+        }
+    }
+}
+
+if (build == 'full' || build == 'deploy') {
+    task sourcesJar(type: Jar) {
+        classifier 'sources'
+        from sourceSets.main.allSource
+    }
+
+    task docJar(type: Jar, dependsOn: javadoc) {
+        classifier 'javadoc'
+        from javadoc.destinationDir
+    }
+}
+
+artifacts {
+    archives jar
+    if (build == 'full' || build == 'deploy') {
+        archives sourcesJar
+        archives docJar
+    }
+}
+
+
+install.repositories.mavenInstaller.pom.whenConfigured { pom ->
+    pom.project { project ->
+        url 'http://fabric3.org'
+        name 'Fabric3'
+        description 'Fabric3'
+
+        scm {
+            url 'scm:git@github.com:Fabric3/fabric3-nats.git'
+            connection 'scm:git@github.com:Fabric3/fabric3-nats.git'
+            developerConnection 'scm:git@github.com:Fabric3/fabric3-nats.git'
+        }
+
+        licenses {
+            license {
+                name 'Apache 2'
+                url 'http://www.fabric3.org/license.html'
+                distribution 'repo'
+            }
+        }
+
+        developers {
+            developer {
+                id 'fabric3'
+                name 'Fabric3 Project'
+            }
+        }
+        if (artifactId.contains('profile-') || artifactId.contains('runtime-standalone')) {
+            // profile projects use POM packaging
+            packaging 'pom'
+        }
+    }
+}
+
+uploadArchives {
+    repositories {
+        if (releaseBuild) {
+
+            mavenDeployer {
+
+                beforeDeployment {
+
+                    MavenDeployment deployment ->
+                        if (project.name.contains('profile-') || project.name.contains('runtime-standalone')) {
+                            // profile projects use POM packaging - reset so plugins do not overwrite
+                            setPomPackaging(deployment, pom)
+                        }
+
+                        signing.signPom(deployment)
+                }
+
+                repository(url: "https://oss.sonatype.org/service/local/staging/deploy/maven2") {
+                    authentication(userName: sonatypeUsername, password: sonatypePassword)
+                }
+
+                pom.project {
+                    url 'http://fabric3.org'
+                    name 'Fabric3'
+                    description 'Fabric3'
+
+                    if (project.name.contains('profile-') || project.name.contains('runtime-standalone')) {
+                        // profile projects use POM packaging
+                        packaging 'pom'
+                    }
+
+                    scm {
+                        url 'scm:git@github.com:Fabric3/fabric3-nats.git'
+                        connection 'scm:git@github.com:Fabric3/fabric3-nats.git'
+                        developerConnection 'scm:git@github.com:Fabric3/fabric3-nats.git'
+                    }
+
+                    licenses {
+                        license {
+                            name 'Apache 2'
+                            url 'http://www.fabric3.org/license.html'
+                            distribution 'repo'
+                        }
+                    }
+
+                    developers {
+                        developer {
+                            id 'fabric3'
+                            name 'Fabric3 Project'
+                        }
+                    }
+                }
+            }
+
+        } else {
+            mavenDeployer {
+                beforeDeployment { MavenDeployment deployment -> signing.signPom(deployment) }
+
+                repository(url: "https://oss.sonatype.org/content/repositories/snapshots") {
+                    authentication(userName: sonatypeUsername, password: sonatypePassword)
+                }
+            }
+        }
+    }
+    if (build == 'full' || build == 'deploy') {
+        signing {
+            required { releaseBuild && (build == 'full' || build == 'deploy') }
+            sign configurations.archives
+        }
+    }
+}
+
+
+
+
+
+task wrapper(type: Wrapper) {
+    gradleVersion = '1.11'
+}
+
+/**
+ * Forces setting of the POM packaging as may be over-written before uploading.
+ * @param deployment the current deployment
+ * @param pom the Maven pom
+ */
+private void setPomPackaging(MavenDeployment deployment, MavenPom pom) {
+    pom.setPackaging('pom');
+
+
+    DocumentBuilderFactory documentBuilderFactory = DocumentBuilderFactory.newInstance();
+    documentBuilderFactory.setNamespaceAware(true);
+    DocumentBuilder builder = documentBuilderFactory.newDocumentBuilder();
+    Document document = builder.parse(new FileInputStream(deployment.pomArtifact.file));
+
+
+    def list = document.getElementsByTagName('packaging')
+    if (list.getLength() == 0) {
+        def child = document.createElement('packaging');
+        child.setTextContent('pom');
+        document.getElementsByTagName("project").item(0).appendChild(child);
+    } else {
+        list.item(0).setTextContent('pom');
+    }
+
+    DOMSource source = new DOMSource(document);
+    javax.xml.transform.Transformer transformer = TransformerFactory.newInstance().newTransformer();
+    transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+    transformer.setOutputProperty("{http://xml.apache.org/xslt}indent-amount", "4");
+    OutputStreamWriter writer = new OutputStreamWriter(new FileOutputStream(deployment.pomArtifact.file), "UTF-8");
+    StreamResult result = new StreamResult(writer);
+    transformer.transform(source, result);
+}
