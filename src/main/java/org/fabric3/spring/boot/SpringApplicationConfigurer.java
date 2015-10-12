@@ -4,7 +4,9 @@ import javax.servlet.Servlet;
 import javax.servlet.ServletContext;
 import javax.servlet.ServletException;
 import java.util.Map;
+import java.util.function.Consumer;
 
+import org.fabric3.api.node.Domain;
 import org.fabric3.api.node.Fabric;
 import org.fabric3.api.node.FabricException;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
@@ -30,7 +32,7 @@ import org.springframework.context.event.ContextClosedEvent;
  *
  * 2. The Fabric3 container is bootstrapped and configured with extensions.
  *
- * 3. The SpringApplication is intialized with the Fabric3 container using {@link #initialize(SpringApplication, Fabric, Map)}.
+ * 3. The SpringApplication is intialized with the Fabric3 container using {@link #initialize(SpringApplication, Fabric, Map, Consumer[])}.
  *
  * 4. The {@link #startFabric(ApplicationContext, Fabric)} method is called to deploy endpoints and start receiving remote requests.
  * </pre>
@@ -75,11 +77,19 @@ public class SpringApplicationConfigurer {
      * @param fabric      the Fabric3 runtime
      * @param properties  initialization properties. Currently, one property is supported: {@code fabric3.context.path} is used to configure the context path
      *                    for HTTP/S endpoints.
+     * @param consumers   optional callback for configuring the Fabric3 domain with services
      */
-    public static void initialize(SpringApplication application, Fabric fabric, Map<String, Object> properties) {
+    @SafeVarargs
+    public static void initialize(SpringApplication application, Fabric fabric, Map<String, Object> properties, Consumer<Domain>... consumers) {
 
         DISPATCHER_INSTANCE = fabric.createTransportDispatcher(Servlet.class, properties);
         fabric.startRuntime();
+
+        if (consumers != null) {
+            for (Consumer<Domain> consumer : consumers) {
+                consumer.accept(fabric.getDomain());
+            }
+        }
 
         CONTEXT_PATH = (String) properties.getOrDefault("http.context", "/fabric3");
 
